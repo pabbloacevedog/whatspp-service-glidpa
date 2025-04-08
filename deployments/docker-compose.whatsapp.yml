@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  whatsapp-service:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: whatsapp-service
+    restart: unless-stopped
+    environment:
+      - DB_PATH=/data/whatsapp.db
+    volumes:
+      - whatsapp-data:/data
+    ports:
+      - "3000:3000"
+
+volumes:
+  whatsapp-data:
+    driver: local

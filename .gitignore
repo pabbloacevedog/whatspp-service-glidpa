@@ -1,0 +1,38 @@
+# Binarios y ejecutables
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Archivos de Go
+*.test
+*.out
+go.work
+
+# Directorios de dependencias
+vendor/
+
+# Archivos de base de datos
+*.db
+whatsapp.db
+
+# Archivos de configuración local
+.env
+
+# Archivos de registro
+*.log
+
+# Directorios y archivos del sistema
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Archivos temporales
+tmp/
+temp/
+
+# Archivos de caché
+.cache/

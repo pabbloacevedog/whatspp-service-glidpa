@@ -26,19 +26,50 @@ func NewBookingUseCase(client *whatsapp.Client, logger logger.Logger) *BookingUs
 	}
 }
 
+// BookingRequest represents the request data for a booking confirmation
+type BookingRequest struct {
+	BookingID    string
+	ServiceName  string
+	UserName     string
+	LocationName string
+	StartTime    string
+	PhoneNumber  string
+}
+
+// BookingResponse represents the response data for a booking confirmation
+type BookingResponse struct {
+	BookingID string
+	Message   string
+	Status    string
+}
+
 // SendConfirmationMessage sends a confirmation message with interactive buttons
-func (u *BookingUseCase) SendConfirmationMessage(phoneNumber string) error {
+func (u *BookingUseCase) SendConfirmationMessage(request BookingRequest) (*BookingResponse, error) {
 	// Check if the client is connected
 	if !u.client.IsConnected() {
-		return fmt.Errorf("WhatsApp client is not connected")
+		return nil, fmt.Errorf("WhatsApp client is not connected")
 	}
 
 	// Parse the phone number to JID format
-	jid := types.NewJID(phoneNumber, types.DefaultUserServer)
+	jid := types.NewJID(request.PhoneNumber, types.DefaultUserServer)
 
-	// Create a simple text message
+	// Create a detailed confirmation message
+	messageText := fmt.Sprintf(
+		"Detalles de tu cita:\n\n"+
+			"📅 Servicio: %s\n"+
+			"👤 Cliente: %s\n"+
+			"📍 Ubicación: %s\n"+
+			"⏰ Hora: %s\n\n"+
+			"¿Deseas confirmar esta cita?\n"+
+			"Por favor, responde 'Sí' para confirmar o 'No' para cancelar.",
+		request.ServiceName,
+		request.UserName,
+		request.LocationName,
+		request.StartTime,
+	)
+
 	message := &waE2E.Message{
-		Conversation: proto.String("¿Deseas confirmar tu cita?\n\nPor favor, responde 'Sí' para confirmar o 'No' para cancelar."),
+		Conversation: proto.String(messageText),
 	}
 
 	// Send the message with context
@@ -46,9 +77,16 @@ func (u *BookingUseCase) SendConfirmationMessage(phoneNumber string) error {
 	_, err := u.client.Send(ctx, jid, message)
 	if err != nil {
 		u.logger.Error("Failed to send confirmation message", zap.Error(err))
-		return fmt.Errorf("failed to send confirmation message: %w", err)
+		return nil, fmt.Errorf("failed to send confirmation message: %w", err)
 	}
 
-	u.logger.Info("Confirmation message sent successfully", zap.String("phone_number", phoneNumber))
-	return nil
+	u.logger.Info("Confirmation message sent successfully",
+		zap.String("booking_id", request.BookingID),
+		zap.String("phone_number", request.PhoneNumber))
+
+	return &BookingResponse{
+		BookingID: request.BookingID,
+		Message:   messageText,
+		Status:    "sent",
+	}, nil
 }

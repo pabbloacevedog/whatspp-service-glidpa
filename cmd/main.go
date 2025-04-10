@@ -49,6 +49,11 @@ func main() {
 		log.Fatal("Failed to initialize WhatsApp client", zap.Error(err))
 	}
 
+	// Conectar el cliente de WhatsApp
+	if err := whatsappClient.Connect(); err != nil {
+		log.Fatal("Failed to connect WhatsApp client", zap.Error(err))
+	}
+
 	// Inicializar el caso de uso de autenticación
 	authUseCase := usecases.NewWhatsAppAuthUseCase(
 		whatsappClient,
@@ -56,6 +61,9 @@ func main() {
 		usecases.WithQRTimeout(5*time.Minute),
 		usecases.WithQRSize(256),
 	)
+
+	// Inicializar el caso de uso de reservas
+	bookingUseCase := usecases.NewBookingUseCase(whatsappClient, log)
 
 	// Configurar el router Gin
 	router := gin.Default()
@@ -78,6 +86,14 @@ func main() {
 	// Registrar los manejadores HTTP
 	authHandler := handlers.NewAuthHandler(authUseCase, log)
 	authHandler.RegisterRoutes(router)
+
+	// Registrar el manejador de reservas
+	bookingHandler := handlers.NewBookingHandler(bookingUseCase, log)
+	bookingHandler.RegisterRoutes(router, authHandler)
+
+	// Registrar el manejador de webhook para mensajes entrantes
+	webhookHandler := handlers.NewWebhookHandler(bookingUseCase, log)
+	webhookHandler.RegisterRoutes(router)
 
 	// Configurar el servidor HTTP con timeouts
 	server := &http.Server{

@@ -3,6 +3,7 @@ package usecases
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pabbloacevedog/whatspp-service-glidpa/pkg/logger"
 	"github.com/pabbloacevedog/whatspp-service-glidpa/pkg/whatsapp"
@@ -33,6 +34,8 @@ type BookingRequest struct {
 	UserName     string
 	LocationName string
 	StartTime    string
+	Date         string
+	EmployeeName string
 	PhoneNumber  string
 }
 
@@ -41,6 +44,13 @@ type BookingResponse struct {
 	BookingID string
 	Message   string
 	Status    string
+}
+
+// MessageResponse represents the response to an incoming message
+type MessageResponse struct {
+	PhoneNumber string
+	Message     string
+	Status      string
 }
 
 // SendConfirmationMessage sends a confirmation message with interactive buttons
@@ -55,17 +65,21 @@ func (u *BookingUseCase) SendConfirmationMessage(request BookingRequest) (*Booki
 
 	// Create a detailed confirmation message
 	messageText := fmt.Sprintf(
-		"Detalles de tu cita:\n\n"+
-			"📅 Servicio: %s\n"+
-			"👤 Cliente: %s\n"+
+		"¡Hola %s! 😊\n\n"+
+			"Tu cita para el servicio de %s está casi lista.\n"+
 			"📍 Ubicación: %s\n"+
-			"⏰ Hora: %s\n\n"+
-			"¿Deseas confirmar esta cita?\n"+
-			"Por favor, responde 'Sí' para confirmar o 'No' para cancelar.",
-		request.ServiceName,
+			"⏰ Hora: %s\n"+
+			"📅 Fecha: %s\n"+
+			"👤 Atendido por: %s\n\n"+
+			"¿Te gustaría confirmar esta cita?\n"+
+			"Por favor, responde 'Sí' para confirmar o 'No' para cancelar.\n"+
+			"¡Gracias por elegirnos! 🌟",
 		request.UserName,
+		request.ServiceName,
 		request.LocationName,
 		request.StartTime,
+		request.Date,
+		request.EmployeeName,
 	)
 
 	message := &waE2E.Message{
@@ -88,5 +102,86 @@ func (u *BookingUseCase) SendConfirmationMessage(request BookingRequest) (*Booki
 		BookingID: request.BookingID,
 		Message:   messageText,
 		Status:    "sent",
+	}, nil
+}
+
+// ProcessIncomingMessage processes incoming messages from WhatsApp
+func (u *BookingUseCase) ProcessIncomingMessage(phoneNumber, messageBody string) (*MessageResponse, error) {
+	// Check if the client is connected
+	if !u.client.IsConnected() {
+		return nil, fmt.Errorf("WhatsApp client is not connected")
+	}
+
+	// Log the incoming message
+	u.logger.Info("Received message from WhatsApp",
+		zap.String("phone_number", phoneNumber),
+		zap.String("message", messageBody))
+
+	// Parse the phone number to JID format
+	jid := types.NewJID(phoneNumber, types.DefaultUserServer)
+
+	// Check if the message is a response to a booking confirmation
+	var responseMessage string
+	var status string
+
+	// Normalize the message body for case-insensitive comparison
+	normalizedMessage := strings.ToLower(messageBody)
+
+	switch {
+	case strings.Contains(normalizedMessage, "sí") || strings.Contains(normalizedMessage, "si"):
+		// User confirmed the booking
+		responseMessage = "¡Gracias por confirmar tu cita! Te esperamos en la fecha y hora acordada. 😊"
+		status = "confirmed"
+		u.logger.Info("Usuario confirmó la reserva",
+			zap.String("phone_number", phoneNumber),
+			zap.String("status", status))
+
+	case strings.Contains(normalizedMessage, "no"):
+		// User rejected the booking
+		responseMessage = "Hemos cancelado tu cita. Si deseas reagendarla, por favor contáctanos. ¡Gracias!"
+		status = "cancelled"
+		u.logger.Info("Usuario canceló la reserva",
+			zap.String("phone_number", phoneNumber),
+			zap.String("status", status))
+
+	default:
+		// Unrecognized response
+		responseMessage = "No entendimos tu respuesta. Por favor, responde 'Sí' para confirmar o 'No' para cancelar tu cita."
+		status = "unknown"
+		u.logger.Warn("Usuario envió respuesta no reconocida para la reserva",
+			zap.String("phone_number", phoneNumber),
+			zap.String("message", messageBody),
+			zap.String("status", status))
+	}
+
+	// Send response message back to the user
+	message := &waE2E.Message{
+		Conversation: proto.String(responseMessage),
+	}
+
+	// Log before sending message
+	u.logger.Info("Intentando enviar respuesta al usuario",
+		zap.String("phone_number", phoneNumber),
+		zap.String("message", responseMessage),
+		zap.String("status", status))
+
+	// Send the message with context
+	ctx := context.Background()
+	resp, err := u.client.Send(ctx, jid, message)
+	if err != nil {
+		u.logger.Error("Failed to send response message", zap.Error(err))
+		return nil, fmt.Errorf("failed to send response message: %w", err)
+	}
+
+	// Log successful message sending
+	u.logger.Info("Respuesta enviada exitosamente",
+		zap.String("phone_number", phoneNumber),
+		zap.String("message_id", resp.ID),
+		zap.String("status", status))
+
+	return &MessageResponse{
+		PhoneNumber: phoneNumber,
+		Message:     responseMessage,
+		Status:      status,
 	}, nil
 }

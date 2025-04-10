@@ -18,6 +18,12 @@ import (
 	"go.uber.org/zap"
 )
 
+// WhatsAppMessage represents a message received from WhatsApp
+type WhatsAppMessage struct {
+	From string
+	Body string
+}
+
 // EventHandler is a function that handles WhatsApp events
 type EventHandler func(evt interface{})
 
@@ -71,7 +77,7 @@ func NewClient(dbPath string, options ...ClientOption) (*Client, error) {
 		store:       container,
 		db:          db,
 		deviceStore: deviceStore,
-		qrChan:      make(chan string),
+		qrChan:      make(chan string, 1), // Buffered channel to prevent blocking
 	}
 
 	// Apply options
@@ -126,21 +132,32 @@ func (c *Client) Disconnect() error {
 
 // Logout logs out from WhatsApp and removes the session
 func (c *Client) Logout() error {
+	// Check if we have a valid device ID
+	if c.deviceStore == nil || c.deviceStore.ID == nil {
+		c.logger.Warn("No device session found during logout")
+		return nil
+	}
+
+	// First disconnect if connected
 	if c.IsConnected() {
+		// Attempt to logout from WhatsApp
 		err := c.client.Logout()
 		if err != nil {
+			c.logger.Error("Failed to logout from WhatsApp", zap.Error(err))
 			return fmt.Errorf("failed to logout: %w", err)
 		}
 		c.setConnected(false)
 	}
 
 	// Remove the device from the store
+	c.logger.Info("Removing device session", zap.String("device_id", c.deviceStore.ID.String()))
 	err := c.deviceStore.Delete()
 	if err != nil {
+		c.logger.Error("Failed to delete device", zap.Error(err))
 		return fmt.Errorf("failed to delete device: %w", err)
 	}
 
-	c.logger.Info("Logged out from WhatsApp")
+	c.logger.Info("Successfully logged out from WhatsApp")
 	return nil
 }
 
@@ -204,20 +221,80 @@ func (c *Client) handleEvent(evt interface{}) {
 
 	case *events.QR:
 		c.qrMutex.Lock()
+		// Log QR code event details for debugging
+		c.logger.Info("Received QR code event",
+			zap.Int("code_count", len(v.Codes)),
+			zap.Int("code_length", len(v.Codes[0])),
+		// zap.String("timeout", v.Timeout.String())
+		)
+
+		// Clear existing QR code if channel is full
+		select {
+		case <-c.qrChan: // Drain old QR code if present
+			c.logger.Info("Cleared old QR code from channel")
+		default:
+		}
+
+		// Send new QR code
 		select {
 		case c.qrChan <- v.Codes[0]:
-			c.logger.Info("QR code sent to channel")
+			c.logger.Info("New QR code sent to channel successfully")
 		default:
-			c.logger.Warn("QR channel full, discarding QR code")
+			// This is critical - if we can't send the QR code, the user won't be able to log in
+			c.logger.Error("Failed to send QR code to channel - channel is full")
+			// Try to drain and send again
+			select {
+			case <-c.qrChan: // Force drain
+				select {
+				case c.qrChan <- v.Codes[0]: // Try again
+					c.logger.Info("QR code sent to channel after forced drain")
+				default:
+					c.logger.Error("Still failed to send QR code after forced drain")
+				}
+			default:
+				c.logger.Error("Channel appears empty but send failed - possible deadlock")
+			}
 		}
 		c.qrMutex.Unlock()
 
 	case *events.LoggedOut:
 		c.setConnected(false)
 		c.logger.Info("Logged out from WhatsApp")
+
+	case *events.Message:
+		// Process incoming message
+		c.logger.Info("Received message",
+			zap.String("from", v.Info.Sender.User),
+			zap.String("chat", v.Info.Chat.User),
+			zap.String("message_id", v.Info.ID))
+
+		// Extract message content
+		var messageBody string
+		if v.Message.GetConversation() != "" {
+			messageBody = v.Message.GetConversation()
+		} else if v.Message.GetExtendedTextMessage() != nil && v.Message.GetExtendedTextMessage().GetText() != "" {
+			messageBody = v.Message.GetExtendedTextMessage().GetText()
+		}
+
+		if messageBody != "" {
+			c.logger.Info("Message content", zap.String("body", messageBody))
+
+			// Create a webhook message
+			webhookMessage := &WhatsAppMessage{
+				From: v.Info.Sender.User,
+				Body: messageBody,
+			}
+
+			// Call all registered handlers with the webhook message
+			c.handlersMutex.RLock()
+			for _, handler := range c.handlers {
+				go handler(webhookMessage)
+			}
+			c.handlersMutex.RUnlock()
+		}
 	}
 
-	// Call all registered handlers
+	// Call all registered handlers with the original event
 	c.handlersMutex.RLock()
 	for _, handler := range c.handlers {
 		go handler(evt)

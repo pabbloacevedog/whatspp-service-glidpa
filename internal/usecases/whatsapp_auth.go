@@ -83,16 +83,14 @@ func (u *WhatsAppAuthUseCase) GenerateQR(ctx context.Context) (string, error) {
 		return "", errors.New("already logged in")
 	}
 
-	// If we have a cached QR code, return it
-	if u.qrCodeCache != "" || u.QRCodeCache != "" {
-		if u.QRCodeCache != "" {
-			return u.QRCodeCache, nil
-		}
-		return u.qrCodeCache, nil
-	}
+	// Clear the QR code cache to ensure we get a fresh QR code
+	u.qrCodeCache = ""
+	u.QRCodeCache = ""
+	u.logger.Info("Generating new QR code for authentication")
 
 	// Connect to WhatsApp if not connected
 	if !u.client.IsConnected() {
+		u.logger.Info("Connecting to WhatsApp for QR code generation")
 		if err := u.client.Connect(); err != nil {
 			u.logger.Error("Failed to connect to WhatsApp", zap.Error(err))
 			return "", fmt.Errorf("failed to connect to WhatsApp: %w", err)
@@ -105,16 +103,27 @@ func (u *WhatsAppAuthUseCase) GenerateQR(ctx context.Context) (string, error) {
 
 	// Get the QR channel
 	qrChan := u.client.GetQRChannel(ctx)
+	u.logger.Info("Waiting for QR code from WhatsApp")
 
 	// Wait for a QR code
 	select {
 	case qrCode := <-qrChan:
+		// Validate QR code
+		if qrCode == "" {
+			u.logger.Error("Received empty QR code from WhatsApp")
+			return "", errors.New("received empty QR code from WhatsApp")
+		}
+
 		// Cache the QR code text
 		u.qrCodeCache = qrCode
+		u.QRCodeCache = qrCode
+		u.logger.Info("Successfully received and cached QR code",
+			zap.Int("qr_code_length", len(qrCode)))
 
 		return qrCode, nil
 
 	case <-ctx.Done():
+		u.logger.Error("Timeout waiting for QR code from WhatsApp")
 		return "", errors.New("timeout waiting for QR code")
 	}
 }

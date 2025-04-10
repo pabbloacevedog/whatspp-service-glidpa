@@ -24,10 +24,10 @@ func NewBookingHandler(bookingUseCase *usecases.BookingUseCase, logger logger.Lo
 }
 
 // RegisterRoutes registers the booking routes
-func (h *BookingHandler) RegisterRoutes(router *gin.Engine) {
+func (h *BookingHandler) RegisterRoutes(router *gin.Engine, authHandler *AuthHandler) {
 	booking := router.Group("/booking")
 	{
-		booking.POST("/confirm", h.ConfirmBooking)
+		booking.POST("/confirm", authHandler.AuthMiddleware(), h.ConfirmBooking)
 	}
 }
 
@@ -38,6 +38,8 @@ type BookingRequest struct {
 	UserName     string `json:"user_name" binding:"required"`
 	LocationName string `json:"location_name" binding:"required"`
 	StartTime    string `json:"start_time" binding:"required"`
+	Date         string `json:"date" binding:"required"`
+	EmployeeName string `json:"employee_name" binding:"required"`
 	PhoneNumber  string `json:"phone_number" binding:"required"`
 }
 
@@ -66,6 +68,8 @@ func (h *BookingHandler) ConfirmBooking(c *gin.Context) {
 		UserName:     request.UserName,
 		LocationName: request.LocationName,
 		StartTime:    request.StartTime,
+		Date:         request.Date, // Use 'Date' instead of 'date'
+		EmployeeName: request.EmployeeName,
 		PhoneNumber:  request.PhoneNumber,
 	})
 

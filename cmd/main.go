@@ -65,6 +65,22 @@ func main() {
 	// Inicializar el caso de uso de reservas
 	bookingUseCase := usecases.NewBookingUseCase(whatsappClient, log)
 
+	// Registrar el manejador de mensajes de WhatsApp
+	whatsappClient.AddEventHandler(func(evt interface{}) {
+		// Verificar si es un mensaje de WhatsApp
+		if msg, ok := evt.(*whatsapp.WhatsAppMessage); ok {
+			log.Info("Procesando mensaje de WhatsApp en el manejador principal",
+				zap.String("from", msg.From),
+				zap.String("body", msg.Body))
+
+			// Procesar el mensaje con el caso de uso de reservas
+			_, err := bookingUseCase.ProcessIncomingMessage(msg.From, msg.Body)
+			if err != nil {
+				log.Error("Error al procesar mensaje en el manejador principal", zap.Error(err))
+			}
+		}
+	})
+
 	// Configurar el router Gin
 	router := gin.Default()
 
